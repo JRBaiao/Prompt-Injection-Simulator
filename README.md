@@ -41,17 +41,6 @@ Every simulation run goes through three detection layers:
 3. **LLM-as-judge** — a secondary Claude call decides whether the model complied with the injection, with a confidence score and written reasoning
 
 ---
-
-## Screenshots
-
-### Dashboard
-![Dashboard showing scenario selector, payload editor, and verdict banner](docs/screenshot-dashboard.png)
-
-### Verdict & Detection breakdown
-![Detection tab showing input flagged, canary leaked, and judge reasoning](docs/screenshot-detection.png)
-
----
-
 ## Tech Stack
 
 | Layer | Technology |
@@ -74,7 +63,7 @@ Every simulation run goes through three detection layers:
 ### Installation
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/prompt-injection-simulator.git
+git clone https://github.com/JRBaiao/prompt-injection-simulator.git
 cd prompt-injection-simulator
 
 python -m venv venv
