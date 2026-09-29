@@ -1,70 +1,107 @@
 # Prompt Injection Simulator
 
-> **Educational use only.** This tool demonstrates how LLM prompt injection attacks work and how to defend against them. It is intended for security researchers, developers, and students learning about AI safety.
+An interactive lab for running prompt injection attacks against a sandboxed LLM, switching defences on and off, and measuring the result with a three-layer detection pipeline.
+
+> **Educational and defensive use only.** The payloads in this repository demonstrate known attack patterns. Do not use them against systems you do not own or are not explicitly authorised to test.
 
 ---
 
-## What is Prompt Injection?
+## Why this project
 
-Prompt injection is an attack where a malicious user (or malicious content) manipulates an LLM into ignoring its original instructions and following attacker-controlled ones instead. It is one of the most critical vulnerabilities in LLM-powered applications.
+Prompt injection is ranked **LLM01**, the top risk in the [OWASP Top 10 for LLM Applications](https://genai.owasp.org/llm-top-10/). Any application that places untrusted text (user messages, retrieved documents, tool outputs) in the same context as its own instructions is exposed to it.
 
-This simulator lets you:
-- Run **6 documented attack scenarios** against a sandboxed LLM
-- Toggle **mitigations on/off** and compare the difference
-- See exactly what the model received (system prompt + user input)
-- Get a **VULNERABLE / DEFENDED verdict** backed by a 3-layer detection engine
-- Review the **LLM-as-judge reasoning** for each run
+Most explanations stop at describing the attack. This simulator makes it measurable: run the same payload with and without a defence, and get a structured, logged verdict each time. The run log can be reviewed as evidence of how a system behaves under adversarial input, the kind of robustness testing that frameworks such as the EU AI Act (Article 15) expect for high-risk AI systems.
 
----
+## Features
 
-## Attack Scenarios
-
-| # | Scenario | Surface | What the attacker does |
-|---|---|---|---|
-| 1 | **Instruction Override** | Direct | Appends "ignore all previous instructions" after a legitimate query |
-| 2 | **Role Hijack** | Direct | Redefines the model's persona mid-conversation |
-| 3 | **Context Smuggling** | RAG | Hides instructions inside retrieved documents |
-| 4 | **Delimiter Escape** | Direct | Breaks out of XML/JSON wrappers to inject a rogue context |
-| 5 | **Goal Hijack** | Agent | Redirects tool-use steps in an agentic chain |
-| 6 | **Data Exfiltration** | Direct | Tricks the model into revealing its system prompt |
-
-Each scenario ships with **4 payload variants** — from obvious (caught by keyword filters) to subtle (evades most defences) — so you can observe the difference in real time.
+- **6 attack scenarios, 24 payload variants**: each scenario ranges from an obvious, keyword-heavy payload to subtle variants designed to evade simple filters
+- **3 injection surfaces**: direct user input, RAG (poisoned retrieved documents) and an agent with tool access
+- **Mitigation toggle**: rerun any attack against a hardened system prompt and compare outcomes side by side
+- **Custom payloads**: test your own injection attempts against any scenario
+- **Three-layer detection**: regex input validation, canary token monitoring and an LLM-as-judge with confidence score and written reasoning
+- **Full transparency**: every result shows the exact system prompt, user input and model output
+- **Audit trail**: every run is appended to a JSONL log, with an aggregate session report endpoint
 
 ---
 
-## Detection Engine
+## How it works
 
-Every simulation run goes through three detection layers:
+```mermaid
+flowchart LR
+    A[Select scenario<br/>+ payload] --> B{Mitigation<br/>enabled?}
+    B -- No --> C[Baseline<br/>system prompt]
+    B -- Yes --> D[Hardened<br/>system prompt]
+    C --> E[Target model<br/>Claude Haiku 4.5]
+    D --> E
+    E --> F[Detection pipeline]
+    F --> F1[Regex input<br/>validation]
+    F --> F2[Canary token<br/>check]
+    F --> F3[LLM-as-judge]
+    F1 & F2 & F3 --> G{Verdict}
+    G --> H[VULNERABLE /<br/>DEFENDED]
+    H --> I[(simulation_log.jsonl)]
+```
 
-1. **Input validation** — regex patterns for known injection signatures
-2. **Canary token monitoring** — a unique secret is embedded in every system prompt; if it appears in the model output, exfiltration is confirmed
-3. **LLM-as-judge** — a secondary Claude call decides whether the model complied with the injection, with a confidence score and written reasoning
+1. The simulator builds the prompt structure that matches the scenario's attack surface. For RAG scenarios, the payload is hidden inside a fake retrieved document while the user asks an innocent question.
+2. The target model responds.
+3. The detection pipeline analyses the input and output.
+4. The run is marked **VULNERABLE** if the judge finds the model complied with the injection **or** the canary token leaked; otherwise it is **DEFENDED**.
 
 ---
-## Tech Stack
 
-| Layer | Technology |
+## Attack scenarios
+
+| # | Scenario | Surface | Attack | Payload variants |
+|---|---|---|---|---|
+| 1 | Instruction Override | Direct | Appends an "ignore previous instructions" command to a legitimate request | Keyword-heavy · Sandwich · Fictional framing · Authority claim |
+| 2 | Role Hijack | Direct | Redefines the model's persona to remove its restrictions | Blunt swap · Developer mode · Gradual roleplay escalation · Persona via translation |
+| 3 | Context Smuggling | RAG | Hides instructions inside a retrieved document | HTML comment · Legal boilerplate disguise · Invisible markdown · Fake citation |
+| 4 | Delimiter Escape | Direct | Breaks out of structural wrappers to inject a rogue context | XML tag · JSON key · Template injection · Code-fence escape |
+| 5 | Goal Hijack | Agent | Inserts extra "prerequisite" tool steps into an agent's task | Mandatory prerequisite · Safety-check framing · Chained redirect · Fake tool output |
+| 6 | Data Exfiltration | Direct | Extracts the confidential system prompt | Direct request · Translation leak · Documentation roleplay · Socratic question chain |
+
+Each variant includes a short explanation of *why it works*, shown in the UI.
+
+---
+
+## Detection engine
+
+| Layer | Method | What it catches |
+|---|---|---|
+| 1. Input validation | Regex patterns for known injection signatures | Obvious, keyword-based attacks before they reach the model |
+| 2. Canary token | A unique secret is embedded in every system prompt; its appearance in the output confirms a leak | System prompt exfiltration, with no false positives |
+| 3. LLM-as-judge | A second model call assesses whether the target complied with the injection | Subtle attacks that evade pattern matching; returns a confidence score (0–1) and reasoning |
+
+Layering matters: the subtle payload variants are designed to pass layer 1, which is why layers 2 and 3 exist.
+
+---
+
+## Mitigations
+
+When the mitigation toggle is on, the simulator swaps in a **hardened system prompt** for the scenario's surface:
+
+| Surface | Defence applied in the simulator |
 |---|---|
-| Backend | Python · FastAPI · Uvicorn |
-| LLM | Anthropic Claude API (claude-haiku — sandboxed target + judge) |
-| Frontend | Vanilla HTML / CSS / JS (no framework) |
-| Logging | JSONL append-only run log |
-| Config | python-dotenv |
+| Direct | Immutable security rules: no persona or instruction changes, no system prompt disclosure, polite refusal of override attempts |
+| RAG | Retrieved content wrapped in `<retrieved_context>` tags and explicitly labelled as untrusted data to describe, never obey |
+| Agent | Tools restricted to the user's stated request; embedded "prerequisite" steps are skipped |
+
+Prompt hardening alone is not a complete defence. Each scenario also documents the **production-grade controls** it would need, including input sanitisation, randomised delimiters, output classification, least-privilege tool access and human confirmation for out-of-scope actions. Comparing which subtle variants still succeed with mitigation on is one of the key lessons of the tool.
 
 ---
 
-## Getting Started
+## Getting started
 
 ### Prerequisites
 
 - Python 3.10+
-- An [Anthropic API key](https://console.anthropic.com) with credits
+- An [Anthropic API key](https://console.anthropic.com)
 
 ### Installation
 
 ```bash
-git clone https://github.com/JRBaiao/prompt-injection-simulator.git
-cd prompt-injection-simulator
+git clone https://github.com/JRBaiao/Prompt-Injection-Simulator.git
+cd Prompt-Injection-Simulator
 
 python -m venv venv
 source venv/bin/activate        # Windows: venv\Scripts\activate
@@ -75,7 +112,12 @@ pip install -r requirements.txt
 
 ```bash
 cp .env.example .env
-# Open .env and paste your Anthropic API key
+```
+
+Then set your key in `.env`:
+
+```
+ANTHROPIC_API_KEY=your-key-here
 ```
 
 ### Run
@@ -84,44 +126,54 @@ cp .env.example .env
 uvicorn main:app --reload
 ```
 
-Open **http://localhost:8000** in your browser.
+- Dashboard: **http://localhost:8000**
+- Interactive API docs: **http://localhost:8000/docs**
 
 ---
 
-## Project Structure
+## API reference
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/scenarios` | List all attack scenarios |
+| `GET` | `/scenarios/{scenario_id}` | Get one scenario with its payload variants |
+| `POST` | `/simulate` | Run a simulation and return the full result and verdict |
+| `GET` | `/history` | Return all logged runs |
+| `DELETE` | `/history` | Clear the run log |
+| `GET` | `/report` | Aggregate session report (total, vulnerable and defended counts) |
+
+Example request:
+
+```bash
+curl -X POST http://localhost:8000/simulate \
+  -H "Content-Type: application/json" \
+  -d '{"scenario_id": "data_exfiltration", "mitigation_enabled": true}'
+```
+
+Pass `custom_payload` to test your own injection instead of the scenario default.
+
+---
+
+## Project structure
 
 ```
-├── main.py          # FastAPI app + REST endpoints
-├── models.py        # Pydantic data models
-├── scenarios.py     # 6 attack scenarios with 24 payload variants
-├── detection.py     # 3-layer detection engine
-├── simulator.py     # Simulation orchestrator + JSONL logger
+├── main.py            # FastAPI app and REST endpoints
+├── simulator.py       # Prompt builder, target model call, verdict and JSONL logging
+├── detection.py       # Three-layer detection engine
+├── scenarios.py       # 6 attack scenarios with 24 payload variants
+├── models.py          # Pydantic data models
 ├── static/
-│   └── index.html   # Single-page dashboard UI
+│   └── index.html     # Single-page dashboard
 ├── requirements.txt
 └── .env.example
 ```
----
-
-## Mitigations Demonstrated
-
-| Attack | Mitigation technique shown |
-|---|---|
-| Instruction Override | Input sanitisation · Instruction-hierarchy enforcement |
-| Role Hijack | Output classification · Persona-lock in system prompt |
-| Context Smuggling | Privilege separation · XML sandboxing of retrieved content |
-| Delimiter Escape | Delimiter escaping · Randomised delimiters |
-| Goal Hijack | Least-privilege tool access · Intent validation |
-| Data Exfiltration | Canary tokens · Output filtering · Explicit refusal instruction |
 
 ---
 
-## Disclaimer
+## Limitations
 
-This tool is built for **education and defensive research only**. All simulations run against a sandboxed model with hard rate limits. Do not use the attack payloads in this repository against production systems you do not own or have explicit permission to test.
-
----
-
-## License
-
-MIT
+- **Single model.** Results reflect Claude Haiku 4.5 at a point in time. Other models, and future versions of this one, will behave differently.
+- **Non-deterministic outcomes.** The same payload can produce different verdicts across runs. Repeat runs before drawing conclusions.
+- **The judge can be wrong.** LLM-as-judge verdicts are probabilistic; check the confidence score and reasoning, especially for borderline cases.
+- **Simulated agent.** The agent scenario describes tools in the system prompt rather than executing real tool calls. It shows intent to misuse tools, not actual side effects.
+- **Prompt-level defences only.** The toggle demonstrates system prompt hardening, not the full set of architectural controls a production system needs.
